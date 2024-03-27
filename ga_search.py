@@ -1,3 +1,4 @@
+import decimal
 import json
 import logging
 import random
@@ -128,6 +129,13 @@ class GASearch:
             if limit_value is not None:
                 parents = parents[:limit_value]
 
+            def limit_to_precision(value: float, precision: int):
+                context = decimal.Context(
+                    prec=precision, rounding=decimal.ROUND_DOWN)
+                decimal.setcontext(context)
+                number = decimal.Decimal(value) / decimal.Decimal(1)
+                return float(number)
+
             if len(parents) == 0 or ("parent_count" in kwargs and kwargs["parent_count"] == 0):
                 # no parents in the pool, generate a new record
                 for field in self.schema.fields:
@@ -138,6 +146,11 @@ class GASearch:
                     elif field.field_type == MorphoBaseType.INT:
                         record[field.field_name] = random.randint(
                             int(field.field_range[0]), int(field.field_range[1]))
+
+                # set precision if present
+                    if field.field_precision is not None:
+                        record[field.field_name] = limit_to_precision(
+                            record[field.field_name], field.field_precision)
 
             elif len(parents) == 1 or ("parent_count" in kwargs and kwargs["parent_count"] == 1):
                 # mutate the parent
@@ -153,6 +166,10 @@ class GASearch:
                             (random_sign())*field.field_step
                         )
                     )
+                    # set precision if present
+                    if field.field_precision is not None:
+                        record[field.field_name] = limit_to_precision(
+                            record[field.field_name], field.field_precision)
             else:
                 def uniform_line(value1: float | int, value2: float | int, UNIF_SIGMA_X: float = 0.5, NORMAL_SIGMA_X: float = 0.6):
                     diff = abs(value1 - value2)
@@ -186,6 +203,11 @@ class GASearch:
                         record[field.field_name] = random.choice([parent1[field.field_name],
                                                                   parent2[field.field_name]])
 
+                    # set precision if present
+                    if field.field_precision is not None:
+                        record[field.field_name] = limit_to_precision(
+                            record[field.field_name], field.field_precision)
+
         except Exception as e:
             print("child generation failed, check logs.")
             logging.error(repr(e))
@@ -213,12 +235,19 @@ class GASearch:
         """
         Fetches an authorization token from the server pointed to by `server_url`.
         """
+        auth_table = self.db.table("auth_token")
+        if len(auth_table.all()) > 0:
+            # auth token is cached
+            self.token = auth_table.all()[0]["token"]
+            return
         # change token backend later
         credentials = self.get_credentials_from_cli()
         endpoint = f"{self.server_url}/token_login/"
         response = requests.post(endpoint, data=credentials)
         if (response.ok):
-            self.token = response.json()["token"]
+            response_json = response.json()
+            auth_table.insert({"token": response_json["token"]})
+            self.token = response_json["token"]
 
     def get_credentials_from_cli(self):
         """
