@@ -12,6 +12,11 @@ from tinydb.table import Document
 Q = Query()
 
 
+class HashableDict(dict):
+    def __hash__(self) -> int:
+        return hash(tuple(sorted(self.items())))
+
+
 # setup logging
 logging.basicConfig(filename="search.log",
                     format="%(asctime)s %(levelname)s:%(message)s")
@@ -73,6 +78,7 @@ class GASearch:
         if len(schema_table.all()) != 0:
             self.schema = MorphoProjectSchema(
                 fields=schema_table.all()[0]["schema"])
+            return
 
         # construct endpoint URL
         endpoint = f"{self.server_url}/project/{self.project_id}"
@@ -105,7 +111,7 @@ class GASearch:
             parents = [datum["parameters"] for datum in response_data]
             record_table.insert_multiple(parents)
 
-    def generate_child(self, fitness_query: QueryLike, sort_condition: str | None = None, sort_ascending: bool = True, limit_value: int | None = None) -> dict | None:
+    def generate_child(self, fitness_query: QueryLike, sort_condition: str | None = None, sort_ascending: bool = True, limit_value: int | None = None, **kwargs: dict) -> dict | None:
         '''
         Creates a parametric child from a pool of parents either through random generation or through genetic crossover.
 
@@ -122,7 +128,7 @@ class GASearch:
             if limit_value is not None:
                 parents = parents[:limit_value]
 
-            if len(parents) == 0:
+            if len(parents) == 0 or ("parent_count" in kwargs and kwargs["parent_count"] == 0):
                 # no parents in the pool, generate a new record
                 for field in self.schema.fields:
                     if field.field_type == MorphoBaseType.FLOAT or field.field_type == MorphoBaseType.DOUBLE:
@@ -133,36 +139,62 @@ class GASearch:
                         record[field.field_name] = random.randint(
                             int(field.field_range[0]), int(field.field_range[1]))
 
-            elif len(parents) == 1:
+            elif len(parents) == 1 or ("parent_count" in kwargs and kwargs["parent_count"] == 1):
                 # mutate the parent
                 # mutate each field in the parent record by +/- step
-                pass
+                def random_sign(): return random.choice([-1, 1])
+
+                for field in self.schema.fields:
+                    # generate field and clamp it to stay within range
+                    record[field.field_name] = min(
+                        field.field_range[1], max(
+                            field.field_range[0],
+                            parents[0][field.field_name] +
+                            (random_sign())*field.field_step
+                        )
+                    )
             else:
+                def uniform_line(value1: float | int, value2: float | int, UNIF_SIGMA_X: float = 0.5, NORMAL_SIGMA_X: float = 0.6):
+                    diff = abs(value1 - value2)
+
+                    mu = (1 + UNIF_SIGMA_X * 2) * \
+                        random.random() - UNIF_SIGMA_X
+
+                    return min(value1, value2) + diff * mu
+
                 # select 2 parents from the pool
                 parent1 = random.choice(parents)
                 parent2 = random.choice(parents)
 
-                # toss a coin to see if we select either parent, randomly generate a value or interpolate / crossover
-                chance = random.randint(1, 4)
-                if chance == 1 or chance == 2:
-                    # select either parent
-                    record = random.choice([parent1, parent2])
-                elif chance == 2:
-                    # mutate / generate a value
-                    for field in self.schema.fields:
-                        if field.field_type == MorphoBaseType.FLOAT or field.field_type == MorphoBaseType.DOUBLE:
-                            record[field.field_name] = field.field_range[0] + \
-                                random.random() * \
-                                (field.field_range[1] - field.field_range[0])
-                        elif field.field_type == MorphoBaseType.INT:
-                            record[field.field_name] = random.randint(
-                                int(field.field_range[0]), int(field.field_range[1]))
-                else:
-                    # interpolate
-                    pass
+                for field in self.schema.fields:
+                    chance = random.randint(1, 2)
+                    if chance == 2:
+                        # breed this gene
+                        if parent1[field.field_name] == parent2[field.field_name]:
+                            record[field.field_name] = parent1[field.field_name]
+                        else:
+                            # interpolate field
+                            record[field.field_name] = uniform_line(
+                                parent1[field.field_name], parent2[field.field_name])
+                            # clamp value to range
+                            record[field.field_name] = min(
+                                field.field_range[1], max(
+                                    field.field_range[0], record[field.field_name]
+                                ))
+                    else:
+                        # select parameter from one parent or the other
+                        record[field.field_name] = random.choice([parent1[field.field_name],
+                                                                  parent2[field.field_name]])
+
         except Exception as e:
             print("child generation failed, check logs.")
             logging.error(repr(e))
+            return None
+
+        # check if the generated record is duplicate.
+        pool_set = set([HashableDict(parent) for parent in parents])
+        if HashableDict(record) in pool_set:
+            print("duplicate child generated")
             return None
 
         # validate generated record
@@ -222,6 +254,6 @@ if __name__ == "__main__":
     # sample code
     SERVER_URL, project_id = open("params.txt").read().strip().split(",")
     search_object = GASearch(SERVER_URL, project_id)
-    print(search_object.generate_child(Q.step > 55))
+    print(search_object.generate_child(Q.step > 1))
     search_object.get_token()
     search_object.put_records()
