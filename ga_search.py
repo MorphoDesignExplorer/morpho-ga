@@ -9,7 +9,6 @@ from tinydb import Query, TinyDB
 from tinydb.queries import QueryLike
 from tinydb.table import Document
 
-SERVER_URL = "http://localhost:8000/"
 Q = Query()
 
 
@@ -221,8 +220,8 @@ class GASearch:
 
 if __name__ == "__main__":
     # sample code
-    search_object = GASearch(
-        SERVER_URL, "d1445161-1ac0-4f5c-b085-acf6164396e3")
+    SERVER_URL, project_id = open("params.txt").read().strip().split(",")
+    search_object = GASearch(SERVER_URL, project_id)
     print(search_object.generate_child(Q.step > 55))
     search_object.get_token()
     search_object.put_records()
