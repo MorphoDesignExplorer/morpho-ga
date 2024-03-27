@@ -258,9 +258,11 @@ class GASearch:
         otp = input("OTP (without spaces): ")
         return {"username": username, "password": password, "token": otp}
 
-    def put_records(self):
+    def put_records(self) -> int:
         """
         Dumps pool of children from `db` to the server.
+
+        :returns: `records_dumped`, the number of records uploaded to the server.
         """
         endpoint = f"{self.server_url}/project/{self.project_id}/model/"
         record_table = self.db.table("records")
@@ -272,11 +274,17 @@ class GASearch:
             rearranged_record = [record[schema_field.field_name]
                                  for schema_field in self.schema.fields]
             self.schema.validate_record(rearranged_record)
-            payload = {"parameters": json.dumps(record)}
-            response = requests.post(endpoint, headers=headers, data=payload)
-            if not response.ok:
-                logging.error(
-                    f"record {record} could not be uploaded; {response.json()}")
+
+        bulk_payload = [{"parameters": record}
+                        for record in record_table.all()]
+        response = requests.post(endpoint, headers=headers, json=bulk_payload)
+        if response.ok:
+            response_json = response.json()
+            records_dumped = response_json["models_created"]
+        elif not response.ok:
+            logging.error(f"records could not be uploaded; {response.json()}")
+
+        return records_dumped
 
 
 if __name__ == "__main__":
