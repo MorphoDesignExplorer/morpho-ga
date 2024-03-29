@@ -48,7 +48,8 @@ search_object.put_records()
 ### Todo
 
 - [ ] Don't upload the entire set of records on generation of each child; only upload new children.
-- [ ] Fetch username and password from a file and Fetch OTP from the CLI or through a CLI option
+- [ ] Fetch username and password from a file and Fetch OTP from the CLI or through a CLI option.
+- [ ] Detect and report malformed Server URLs passed.
 
 
 ### References
