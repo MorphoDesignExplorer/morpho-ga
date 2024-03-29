@@ -1,4 +1,4 @@
-*.txt
 *.json
 *.log
 dist
+docs/build
