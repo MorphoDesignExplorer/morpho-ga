@@ -171,7 +171,12 @@ class GASearch:
                         record[field.field_name] = limit_to_precision(
                             record[field.field_name], field.field_precision)
             else:
+                # Breed from 2 parents
+
                 def uniform_line(value1: float | int, value2: float | int, UNIF_SIGMA_X: float = 0.5, NORMAL_SIGMA_X: float = 0.6):
+                    """
+                    Returns a random value in between `value1` and `value2`, weighted by UNIF_SIGMA_X.
+                    """
                     diff = abs(value1 - value2)
 
                     mu = (1 + UNIF_SIGMA_X * 2) * \
@@ -184,8 +189,24 @@ class GASearch:
                 parent2 = random.choice(parents)
 
                 for field in self.schema.fields:
+                    mutation_chance = random.random()
                     chance = random.randint(1, 2)
-                    if chance == 2:
+
+                    mutation_threshold = kwargs.pop(
+                        "dual_parent_mutation_threshold", 0.1)
+                    assert isinstance(mutation_threshold, float) or isinstance(
+                        mutation_threshold, int)
+
+                    if mutation_chance < mutation_threshold:
+                        # generate a random gene for this field
+                        if field.field_type == MorphoBaseType.FLOAT or field.field_type == MorphoBaseType.DOUBLE:
+                            record[field.field_name] = field.field_range[0] + \
+                                random.random() * \
+                                (field.field_range[1] - field.field_range[0])
+                        elif field.field_type == MorphoBaseType.INT:
+                            record[field.field_name] = random.randint(
+                                int(field.field_range[0]), int(field.field_range[1]))
+                    elif chance == 2:
                         # breed this gene
                         if parent1[field.field_name] == parent2[field.field_name]:
                             record[field.field_name] = parent1[field.field_name]
@@ -198,7 +219,7 @@ class GASearch:
                                 field.field_range[1], max(
                                     field.field_range[0], record[field.field_name]
                                 ))
-                    else:
+                    elif chance == 1:
                         # select parameter from one parent or the other
                         record[field.field_name] = random.choice([parent1[field.field_name],
                                                                   parent2[field.field_name]])
