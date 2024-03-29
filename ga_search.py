@@ -1,7 +1,14 @@
+"""
+Contains the GASearch Interface and some sample code for demonstration.
+
+Documentation in this file follows the NumPy docstring standard for function definitions.
+https://numpydoc.readthedocs.io/en/latest/format.html#docstring-standard
+"""
+
 import decimal
-import json
 import logging
 import random
+from typing import Callable
 
 import requests
 import requests.status_codes
@@ -58,9 +65,22 @@ class GASearch:
     Authorization token fetched from the server
     """
 
+    class NonexistentProjectException(Exception):
+        pass
+
+    class NoAuthTokenException(Exception):
+        pass
+
     def __init__(self, server_url: str, project_id: str) -> None:
         """
         Initializes the local database and populates it with the project's schema and existing records.
+
+        Parameters
+        ----------
+        `server_url`
+            URL pointing to a deployed instance of morpho-db
+        `project_id`
+            UUID of a project hosted on `server_url`
         """
         self.server_url = server_url
         self.project_id = project_id
@@ -72,7 +92,14 @@ class GASearch:
 
     def load_schema(self):
         """
-        Returns a locally cached schema or fetches it from the server pointed to by `server_url`.
+        populates `schema` with a locally cached schema or fetches it from the server pointed to by `server_url`
+
+        Raises
+        ------
+        NonexistentProjectException
+            If the project specified by `project_id` is not found on `server_url`
+        requests.exceptions.ConnectionError
+            If the server specified by 'server_url` is unreachable
         """
         schema_table = self.db.table("schema")
 
@@ -86,7 +113,8 @@ class GASearch:
         response = requests.get(endpoint)
 
         if response.status_code == 404:
-            raise Exception(f"Project {self.project_id} not found")
+            raise self.NonexistentProjectException(
+                f"Project {self.project_id} not found")
 
         # fetch metadata field and construct schema object
         response_data = response.json()["metadata"]
@@ -97,7 +125,15 @@ class GASearch:
 
     def load_records(self):
         """
-        Returns all the records from a locally cached list of generated models or fetches them from the server pointed to by `server_url`.
+        Populates `db` with records from a locally cached list of generated models or fetches them from the server pointed to by `server_url`.
+
+        Raises
+        ------
+        NonexistentProjectException
+            If the project specified by `project_id` is not found on `server_url`
+        requests.exceptions.ConnectionError
+            If the server specified by 'server_url` is unreachable
+
         """
         record_table = self.db.table("records")
 
@@ -106,7 +142,8 @@ class GASearch:
             response = requests.get(endpoint)
 
             if response.status_code == 404:
-                raise Exception(f"Project {self.project_id} not found")
+                raise self.NonexistentProjectException(
+                    f"Project {self.project_id} not found")
 
             response_data = response.json()
             parents = [datum["parameters"] for datum in response_data]
@@ -115,9 +152,42 @@ class GASearch:
     def generate_child(self, fitness_query: QueryLike, sort_condition: str | None = None, sort_ascending: bool = True, limit_value: int | None = None, **kwargs: dict) -> dict | None:
         '''
         Creates a parametric child from a pool of parents either through random generation or through genetic crossover.
+        Inserts the created child into `db` and also returns it for presentation purposes.
 
-        :returns: `record`, if a child is successfully generated or `None` in the case that an error occurs.
-        :rtype: dict
+        Errors in child generation are logged in a generated file `search.log`.
+
+        Parameters
+        ----------
+
+        fitness_query
+            A `tinydb.Query` object representing a query.
+
+        sort_condition
+            field name of a field to sort by.
+
+        sort_ascending
+            specifies whether the fitness pool should be sorted in ascending order (if True) or in descending order (if False).
+
+        limit_value
+            specifies the amount of generated models to include from a sorted pool; analogue to a LIMIT SQL clause.
+
+        kwargs
+            parent_count: int
+                Specifies the amount of parents the child should inherit from. Should fall in the range [0, 2], inclusive.
+
+            dual_parent_mutation_threshold: float
+                Specifies the probability of random mutation when a child inherits from 2 parents. Is 0.1 by default and should fall in the range [0, 1).
+
+        Returns
+        -------
+        `record` : dict | None
+            `record` is a dictionary if a child is successfully generated or `None` in the case that an error occurs during the generation process.
+
+        Raises
+        ------
+        Exception
+            A catchall exception. Details are stored in a local `search.log` logfile.
+
         '''
         record = {}
         record_table = self.db.table("records")
@@ -252,17 +322,31 @@ class GASearch:
         record_table.insert(record)
         return record  # to display and other stuff
 
-    def get_token(self):
+    def get_token(self, credential_backend: Callable[[], dict[str, str]] | None = None):
         """
-        Fetches an authorization token from the server pointed to by `server_url`.
+        Fetches and populates `token` with a cached authorization token or fetches an authorization token from the server pointed to by `server_url`.
+        Requires a username, password and OTP to be provided by a backend.
+
+        Parameters
+        ----------
+        credential_backend
+            A function that returns a dictionary of the form {"username": "...", "password": "...", "token": "..."}. By default, this is the `get_credentials_from_cli` method.
+
+        Raises
+        ------
+        requests.exceptions.ConnectionError
+            If the server specified by 'server_url` is unreachable
         """
         auth_table = self.db.table("auth_token")
         if len(auth_table.all()) > 0:
             # auth token is cached
             self.token = auth_table.all()[0]["token"]
             return
+
         # change token backend later
-        credentials = self.get_credentials_from_cli()
+        if credential_backend is None:
+            credential_backend = self.get_credentials_from_cli
+        credentials = credential_backend()
         endpoint = f"{self.server_url}/token_login/"
         response = requests.post(endpoint, data=credentials)
         if (response.ok):
@@ -273,6 +357,12 @@ class GASearch:
     def get_credentials_from_cli(self):
         """
         Basic backend to get the username, password and otp from the command line.
+
+        Returns
+        -------
+
+        `credentials`
+            A dictionary of the form {"username": "...", "password": "...", "token": "..."}.
         """
         username = input("username: ")
         password = input("password: ")
@@ -283,7 +373,20 @@ class GASearch:
         """
         Dumps pool of children from `db` to the server.
 
-        :returns: `records_dumped`, the number of records uploaded to the server.
+        Logs any errors to a local `search.log` logfile.
+
+        Returns
+        -------
+        records_dumped
+            The number of records uploaded to the server
+
+        Raises
+        ------
+        NoAuthTokenException
+            If the `token` field is not populated by the `get_credentials()` method.
+        requests.exceptions.ConnectionError
+            If the server pointed to by `server_url` is unreachable
+
         """
         endpoint = f"{self.server_url}/project/{self.project_id}/model/"
         record_table = self.db.table("records")
