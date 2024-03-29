@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "morpho-ga"
+version = "1.0.0"
+authors = [
+  { name="Krishna Sivakumar", email="krishnasivaprogrammer@gmail.com" },
+]
+description = "GA Client Component of the Morpho Design Explorer Project. This client provides the `GASearch` class interface to connect to a MorphoDesignExplorer backend, load project schemas and existing generated models, and generate new children with custom fitness functions."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "tinydb == 4.8.0",
+    "requests == 2.31.0",
+    "morpho-typing >= 1.5.0, < 2"
+]
+
+[project.urls]
+Homepage = "https://github.com/MorphoDesignExplorer/morpho-ga/"
